@@ -1,0 +1,7 @@
+ZLOX
+
+zig implementation of the Lox programming language.
+
+More or less translated directly from the C implementation given in Crafting Interpreters[1]
+
+[1]http://craftinginterpreters.com/
