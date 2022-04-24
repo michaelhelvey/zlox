@@ -8,7 +8,11 @@ const OpCode = ck.OpCode;
 pub fn main() anyerror!void {
     var chunk = Chunk.init(test_allocator);
     defer chunk.deinit();
-    try chunk.write_chunk(OpCode.Return);
+
+    const offset = try chunk.write_constant(1.2);
+    try chunk.write_opcode(OpCode.LoadConstant, 123);
+    try chunk.write_operand(offset, 123);
+    try chunk.write_opcode(OpCode.Return, 123);
 
     try chunk.disassemble_chunk("test chunk");
 }
