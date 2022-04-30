@@ -2,7 +2,7 @@ const std = @import("std");
 const Value = @import("value.zig").Value;
 const Allocator = std.mem.Allocator;
 
-pub const OpCode = enum(u8) { Return, LoadConstant };
+pub const OpCode = enum(u8) { Return, LoadConstant, LoadConstantLong };
 
 /// MVP, easy to understand bytecode specification.
 ///
@@ -37,6 +37,15 @@ pub const Chunk = struct {
         try self.write_byte(operand_offset, line);
     }
 
+    pub fn write_operand_long(self: *Self, operand_offset: u32, line: usize) Allocator.Error!void {
+        // cast the 32bit integer to an array of bytes
+        const as_byte_array = @bitCast([4]u8, operand_offset);
+        // write each byte into our code
+        for (as_byte_array) |byte| {
+            try self.write_byte(byte, line);
+        }
+    }
+
     // Private "unsafe" implementation of writing bytes to our code array that
     // wraps required side effects (like writing to our lines array)
     fn write_byte(self: *Self, byte: u8, line: usize) Allocator.Error!void {
@@ -44,11 +53,20 @@ pub const Chunk = struct {
         try self.lines.append(line);
     }
 
-    pub fn write_constant(self: *Self, value: Value) Allocator.Error!u8 {
+    // modify this function to return void, and figure out on its own whether
+    // to write a LoadConstant, or a LoadConstantLong
+    pub fn write_constant(self: *Self, value: Value, line: usize) Allocator.Error!void {
         try self.constants.append(value);
-        // we're kind of cheating here, by assuming that we could never have
-        // more than 255 constants in a given chunk of bytecode
-        return @intCast(u8, self.constants.items.len - 1);
+
+        if (self.constants.items.len < 0xFF) {
+            const offset = @intCast(u8, self.constants.items.len - 1);
+            try self.write_opcode(OpCode.LoadConstant, line);
+            try self.write_operand(offset, line);
+        } else {
+            const offset = @intCast(u32, self.constants.items.len - 1);
+            try self.write_opcode(OpCode.LoadConstantLong, line);
+            try self.write_operand_long(offset, line);
+        }
     }
 
     pub fn disassemble_chunk(self: *Self, name: []const u8) std.os.WriteError!void {
@@ -74,6 +92,16 @@ pub const Chunk = struct {
                     // TODO: abstract value formatting, and standardize width
                     try std.fmt.format(stdin, " {d:.2}\n", .{operand});
                     offset += 2;
+                },
+                .LoadConstantLong => {
+                    // not sure why the slice is not trivially able to be
+                    // de-referenced without this @ptrCast nonsense...see
+                    // https://stackoverflow.com/questions/70102667/converting-a-slice-to-an-array
+                    const array: *[4]u8 = @ptrCast(*[4]u8, self.code.items[offset + 1 .. offset + 4]);
+                    const operand_idx: u32 = @bitCast(u32, array.*);
+                    const operand = self.constants.items[operand_idx];
+                    try std.fmt.format(stdin, " operand: {d:.2}\n", .{operand});
+                    offset += 5;
                 },
             }
         }
