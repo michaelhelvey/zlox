@@ -4,16 +4,20 @@ const Allocator = std.mem.Allocator;
 
 pub const OpCode = enum(u8) { Return, LoadConstant, LoadConstantLong };
 
+const LineIndex = struct {
+    code_index: usize,
+    line_no: usize,
+};
+
 /// MVP, easy to understand bytecode specification.
 ///
 /// Features that we should implement when we get an MVP working:
-/// 1) Encode line number information better
-/// 2) Support multi-byte operands / instructions
-/// 3) Support immediate instructions
+/// 1) Support immediate instructions
 pub const Chunk = struct {
     code: std.ArrayList(u8),
     constants: std.ArrayList(Value),
-    lines: std.ArrayList(usize),
+    lines: std.ArrayList(LineIndex),
+    _last_written_line: usize,
 
     const Self = @This();
 
@@ -21,7 +25,8 @@ pub const Chunk = struct {
         return .{
             .code = std.ArrayList(u8).init(allocator),
             .constants = std.ArrayList(Value).init(allocator),
-            .lines = std.ArrayList(usize).init(allocator),
+            .lines = std.ArrayList(LineIndex).init(allocator),
+            ._last_written_line = 0,
         };
     }
 
@@ -46,13 +51,6 @@ pub const Chunk = struct {
         }
     }
 
-    // Private "unsafe" implementation of writing bytes to our code array that
-    // wraps required side effects (like writing to our lines array)
-    fn write_byte(self: *Self, byte: u8, line: usize) Allocator.Error!void {
-        try self.code.append(byte);
-        try self.lines.append(line);
-    }
-
     // modify this function to return void, and figure out on its own whether
     // to write a LoadConstant, or a LoadConstantLong
     pub fn write_constant(self: *Self, value: Value, line: usize) Allocator.Error!void {
@@ -69,6 +67,18 @@ pub const Chunk = struct {
         }
     }
 
+    // Private "unsafe" implementation of writing bytes to our code array that
+    // wraps required side effects (like writing to our lines array)
+    fn write_byte(self: *Self, byte: u8, line: usize) Allocator.Error!void {
+        try self.code.append(byte);
+        const code_index = self.code.items.len - 1;
+
+        if (self._last_written_line != line) {
+            try self.lines.append(.{ .line_no = line, .code_index = code_index });
+            self._last_written_line = line;
+        }
+    }
+
     pub fn disassemble_chunk(self: *Self, name: []const u8) std.os.WriteError!void {
         const stdin = std.io.getStdOut().writer();
 
@@ -77,9 +87,9 @@ pub const Chunk = struct {
         var offset: usize = 0;
         while (offset < self.code.items.len) {
             const op_code = @intToEnum(OpCode, self.code.items[offset]);
-            const line = self.lines.items[offset];
+            const line = self.get_line(offset);
 
-            try self.print_opcode(stdin, op_code, offset, line);
+            try print_opcode(stdin, op_code, offset, line);
 
             switch (op_code) {
                 .Return => {
@@ -107,11 +117,25 @@ pub const Chunk = struct {
         }
     }
 
-    fn print_opcode(self: *Self, writer: anytype, op_code: OpCode, offset: usize, line: usize) std.os.WriteError!void {
-        if ((offset > 0) and (self.lines.items[offset] == self.lines.items[offset - 1])) {
+    /// Gets a line number from the index of an instruction in O(n) time
+    fn get_line(self: *Self, inst_index: usize) LineIndex {
+        // iterate through lines and find the nearest {line,offset} tuple behind the current offset
+        for (self.lines.items) |line_index, idx| {
+            if (line_index.code_index > inst_index) {
+                // if we've passed the offset, return the previous one
+                return self.lines.items[idx - 1];
+            }
+        }
+
+        // otherwise return the most recent line
+        return self.lines.items[self.lines.items.len - 1];
+    }
+
+    fn print_opcode(writer: anytype, op_code: OpCode, offset: usize, line: LineIndex) std.os.WriteError!void {
+        if ((offset > 0) and line.code_index != offset) {
             try std.fmt.format(writer, "{d:0>4}    | {s}", .{ offset, op_code });
         } else {
-            try std.fmt.format(writer, "{d:0>4} {d:>4} {s}", .{ offset, line, op_code });
+            try std.fmt.format(writer, "{d:0>4} {d:>4} {s}", .{ offset, line.line_no, op_code });
         }
     }
 };
