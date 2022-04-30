@@ -1,6 +1,7 @@
 const std = @import("std");
 const Value = @import("value.zig").Value;
 const Allocator = std.mem.Allocator;
+const test_allocator = std.testing.allocator;
 
 pub const OpCode = enum(u8) { Return, LoadConstant, LoadConstantLong };
 
@@ -13,6 +14,7 @@ const LineIndex = struct {
 ///
 /// Features that we should implement when we get an MVP working:
 /// 1) Support immediate instructions
+/// 2) Could probably speed up writing bytes quite a bit by optimizing the allocator
 pub const Chunk = struct {
     code: std.ArrayList(u8),
     constants: std.ArrayList(Value),
@@ -32,6 +34,8 @@ pub const Chunk = struct {
 
     pub fn deinit(self: *Self) void {
         self.code.deinit();
+        self.constants.deinit();
+        self.lines.deinit();
     }
 
     pub fn write_opcode(self: *Self, op_code: OpCode, line: usize) Allocator.Error!void {
@@ -51,8 +55,9 @@ pub const Chunk = struct {
         }
     }
 
-    // modify this function to return void, and figure out on its own whether
-    // to write a LoadConstant, or a LoadConstantLong
+    /// Write a constant, and use the size of the current number of constants to
+    /// determine whether to write a LoadConstant or a LoadConstantLong
+    /// instruction
     pub fn write_constant(self: *Self, value: Value, line: usize) Allocator.Error!void {
         try self.constants.append(value);
 
@@ -82,7 +87,7 @@ pub const Chunk = struct {
     pub fn disassemble_chunk(self: *Self, name: []const u8) std.os.WriteError!void {
         const stdin = std.io.getStdOut().writer();
 
-        try std.fmt.format(stdin, "== {s} ==\n", .{name});
+        try std.fmt.format(stdin, "\n== {s} ==\n", .{name});
 
         var offset: usize = 0;
         while (offset < self.code.items.len) {
@@ -139,3 +144,29 @@ pub const Chunk = struct {
         }
     }
 };
+
+test "chunks can be written to and disassembled" {
+    var chunk = Chunk.init(test_allocator);
+    defer chunk.deinit();
+
+    // TODO: split up disassembly into an output format and a printer for that
+    // format, so we can make assertions about the datastructure, rather than
+    // formatting.  As it is, at least we're asserting that it runs, and that
+    // it doesn't leak memory etc.
+
+    // expect an output like:
+    // == test chunk ==
+    //0000  123 OpCode.LoadConstant 1.20
+    //0002    | OpCode.Return
+    //0003    | OpCode.Return
+    //0004  234 OpCode.Return
+    //0005    | OpCode.Return
+
+    try chunk.write_constant(1.2, 123);
+    try chunk.write_opcode(OpCode.Return, 123);
+    try chunk.write_opcode(OpCode.Return, 123);
+    try chunk.write_opcode(OpCode.Return, 234);
+    try chunk.write_opcode(OpCode.Return, 234);
+
+    try chunk.disassemble_chunk("test chunk");
+}

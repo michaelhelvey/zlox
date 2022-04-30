@@ -1,5 +1,6 @@
 const std = @import("std");
 const ck = @import("chunk.zig");
+const vm = @import("vm.zig");
 
 const test_allocator = std.testing.allocator;
 const Chunk = ck.Chunk;
