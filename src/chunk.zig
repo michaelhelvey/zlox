@@ -1,16 +1,22 @@
 const std = @import("std");
 const Value = @import("value.zig").Value;
-const Allocator = std.mem.Allocator;
-const test_allocator = std.testing.allocator;
+const bytecode = @import("bytecode.zig");
 
-pub const OpCode = enum(u8) { Return, LoadConstant, LoadConstantLong };
+const OpCode = bytecode.OpCode;
+const Instruction = bytecode.Instruction;
+const InstructionIter = bytecode.InstructionIter;
+
+const Allocator = std.mem.Allocator;
 
 const LineIndex = struct {
     code_index: usize,
     line_no: usize,
 };
 
-/// MVP, easy to understand bytecode specification.
+/// MVP, easy to understand bytecode specification.  Effectively an "encoder" interface.
+/// TODO: more clearly differentiate between encoding/decoding of bytecode, so
+/// that this Chunk struct can more simply just be a data structure for
+/// CONTEXT, and not encoding directly.
 ///
 /// Features that we should implement when we get an MVP working:
 /// 1) Support immediate instructions
@@ -89,36 +95,30 @@ pub const Chunk = struct {
 
         try std.fmt.format(stdin, "\n== {s} ==\n", .{name});
 
+        var iter = InstructionIter.init(self.code.items);
         var offset: usize = 0;
-        while (offset < self.code.items.len) {
+
+        while (iter.next()) |instruction| {
             const op_code = @intToEnum(OpCode, self.code.items[offset]);
             const line = self.get_line(offset);
 
-            try print_opcode(stdin, op_code, offset, line);
+            try print_opcode(stdin, instruction.op_code, offset, line);
 
             switch (op_code) {
                 .Return => {
                     _ = try stdin.write("\n");
-                    offset += 1;
                 },
                 .LoadConstant => {
-                    const operand_idx = self.code.items[offset + 1];
-                    const operand = self.constants.items[operand_idx];
-                    // TODO: abstract value formatting, and standardize width
-                    try std.fmt.format(stdin, " {d:.2}\n", .{operand});
-                    offset += 2;
+                    const operand = instruction.operand_as_byte();
+                    try std.fmt.format(stdin, " {d:.2}\n", .{self.constants.items[operand]});
                 },
                 .LoadConstantLong => {
-                    // not sure why the slice is not trivially able to be
-                    // de-referenced without this @ptrCast nonsense...see
-                    // https://stackoverflow.com/questions/70102667/converting-a-slice-to-an-array
-                    const array: *[4]u8 = @ptrCast(*[4]u8, self.code.items[offset + 1 .. offset + 4]);
-                    const operand_idx: u32 = @bitCast(u32, array.*);
-                    const operand = self.constants.items[operand_idx];
-                    try std.fmt.format(stdin, " operand: {d:.2}\n", .{operand});
-                    offset += 5;
+                    const operand = instruction.operand_as_long();
+                    try std.fmt.format(stdin, " operand: {d:.2}\n", .{self.constants.items[operand]});
                 },
             }
+
+            offset += instruction.op_code.instruction_size();
         }
     }
 
@@ -146,6 +146,7 @@ pub const Chunk = struct {
 };
 
 test "chunks can be written to and disassembled" {
+    const test_allocator = std.testing.allocator;
     var chunk = Chunk.init(test_allocator);
     defer chunk.deinit();
 
